@@ -133,6 +133,20 @@ def entry_confirm(candles: list[Candle], score: Score):
 
 
 def build_decision(inp: SignalInput) -> Decision:
+        if not inp.candles or len(inp.candles) < 6:
+        return Decision(
+            mode=inp.mode_hint or "FIRST_MOVE",
+            score=Score(letter="C", points=0),
+            entry_open=False,
+            entry_type="NO DATA",
+            risk_pct=0.0,
+            telegram_text=(
+                "⚪ NO ENTRY\n\n"
+                f"<b>{inp.symbol}</b>\n"
+                "Недостаточно свечей для анализа"
+            ),
+        )
+
     mode = pick_mode(inp)
     score = score_market(inp.candles)
 
