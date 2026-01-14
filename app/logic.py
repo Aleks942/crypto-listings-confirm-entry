@@ -1,8 +1,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
+from typing import Optional
+
 from .models import SignalInput, Candle, ScoreLetter, Mode
 from .config import RISK_FIRST_MOVE, RISK_CONFIRM
 
+
+# ==================================================
+# DATA STRUCTURES
+# ==================================================
 
 @dataclass
 class Score:
@@ -20,6 +26,10 @@ class Decision:
     telegram_text: str
 
 
+# ==================================================
+# HELPERS
+# ==================================================
+
 def _avg(values: list[float]) -> float:
     return sum(values) / max(1, len(values))
 
@@ -30,6 +40,10 @@ def _impulse_metrics(candles: list[Candle]):
     closes = [c.c for c in candles]
     return max(highs), min(lows), closes[-1]
 
+
+# ==================================================
+# SCORING
+# ==================================================
 
 def score_market(candles: list[Candle]) -> Score:
     if len(candles) < 14:
@@ -75,6 +89,10 @@ def score_market(candles: list[Candle]) -> Score:
 
     return Score(letter=letter, points=points)
 
+
+# ==================================================
+# ENTRY LOGIC
+# ==================================================
 
 def pick_mode(inp: SignalInput) -> Mode:
     if inp.mode_hint in ("FIRST_MOVE", "CONFIRM_LIGHT"):
@@ -132,8 +150,13 @@ def entry_confirm(candles: list[Candle], score: Score):
     return False, "Нет подтверждения"
 
 
+# ==================================================
+# MAIN DECISION (SAFE, NO 500 ERRORS)
+# ==================================================
+
 def build_decision(inp: SignalInput) -> Decision:
-        if not inp.candles or len(inp.candles) < 6:
+    # ---------- GUARD: мало данных ----------
+    if not inp.candles or len(inp.candles) < 6:
         return Decision(
             mode=inp.mode_hint or "FIRST_MOVE",
             score=Score(letter="C", points=0),
@@ -167,11 +190,11 @@ def build_decision(inp: SignalInput) -> Decision:
 
     text = (
         f"{emoji} {entry_type} — {status}\n\n"
-        f"{inp.symbol} ({inp.exchange}) TF {inp.tf}\n"
+        f"<b>{inp.symbol}</b> ({inp.exchange}) TF {inp.tf}\n"
         f"SCORE: {score.letter} ({score.points}/4)\n"
         f"Риск: {risk:.2f}%\n\n"
-        f"Причина:\n- {reason}\n\n"
-        f"Exit:\n- {tp}"
+        f"Причина:\n• {reason}\n\n"
+        f"Exit:\n• {tp}"
     )
 
     return Decision(
