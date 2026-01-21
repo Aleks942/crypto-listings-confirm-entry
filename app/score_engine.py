@@ -1,83 +1,92 @@
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List
 
 
+# =========================
+# Result container
+# =========================
 @dataclass
-class ScoreResult:
-    grade: str          # A / B / C
-    points: int         # 0–5
-    reasons: List[str]  # объяснение
-    send: bool          # слать в Telegram или молчать
+class CheckResult:
+    ok: bool
+    points: int
+    note: str
 
 
-def score_entry(
-    candles_5m: List[Dict],
-    candles_15m: List[Dict] | None = None,
-) -> ScoreResult:
-    """
-    Prop-style scoring engine.
-    Работает строго, без эмоций.
-    """
+# =========================
+# Helpers
+# =========================
+def _avg(vals: List[float]) -> float:
+    return sum(vals) / max(1, len(vals))
 
-    points = 0
-    reasons = []
 
-    # ===============================
-    # 1. Импульс 5m
-    # ===============================
-    if len(candles_5m) >= 3:
-        last = candles_5m[-1]
-        prev = candles_5m[-2]
+def _body(c):
+    return abs(c.c - c.o)
 
-        body = abs(last["c"] - last["o"])
-        prev_body = abs(prev["c"] - prev["o"])
 
-        if body > prev_body * 1.3:
-            points += 1
-            reasons.append("Импульсная свеча 5m")
+def _range(c):
+    return max(1e-9, c.h - c.l)
 
-        if last["v"] > sum(c["v"] for c in candles_5m[-6:-1]) / 5:
-            points += 1
-            reasons.append("Объём выше среднего")
 
-    # ===============================
-    # 2. Структура (нет рванья)
-    # ===============================
-    closes = [c["c"] for c in candles_5m[-5:]]
-    if max(closes) - min(closes) < min(closes) * 0.06:
-        points += 1
-        reasons.append("Контролируемая структура")
+# =========================
+# 1️⃣ LIQUIDITY + SPREAD
+# =========================
+def score_liquidity(candles) -> CheckResult:
+    vols = [c.v for c in candles[-20:]]
+    bodies = [_body(c) for c in candles[-20:]]
+    ranges = [_range(c) for c in candles[-20:]]
 
-    # ===============================
-    # 3. Подтверждение 15m
-    # ===============================
-    if candles_15m and len(candles_15m) >= 2:
-        last15 = candles_15m[-1]
-        prev15 = candles_15m[-2]
+    avg_vol = _avg(vols)
+    avg_body = _avg(bodies)
+    avg_range = _avg(ranges)
 
-        if last15["c"] > prev15["c"]:
-            points += 1
-            reasons.append("Подтверждение таймфрейма 15m")
+    # мёртвый рынок
+    if avg_vol <= 0:
+        return CheckResult(False, 0, "no volume")
 
-    # ===============================
-    # 4. Грейд
-    # ===============================
-    if points >= 4:
-        grade = "A"
-        send = True
-    elif points == 3:
-        grade = "B"
-        send = True
-    elif points == 2:
-        grade = "C"
-        send = True
-    else:
-        grade = "NO_TRADE"
-        send = False
+    # тонкий рынок / большой спред
+    if avg_body / avg_range < 0.15:
+        return CheckResult(False, 0, "thin market / wide spread")
 
-    return ScoreResult(
-        grade=grade,
-        points=points,
-        reasons=reasons,
-        send=send,
-    )
+    pts = 2 if avg_vol > _avg(vols[:-5]) else 1
+    return CheckResult(True, pts, "liquidity ok")
+
+
+# =========================
+# 2️⃣ STRUCTURE (NO FAKE MOVE)
+# =========================
+def score_structure(candles) -> CheckResult:
+    last = candles[-1]
+    prev = candles[-5:]
+
+    impulse = max(c.h for c in prev) - min(c.l for c in prev)
+    body = _body(last)
+
+    # импульс без тела = манипуляция
+    if body / max(1e-9, impulse) < 0.25:
+        return CheckResult(False, 0, "fake impulse")
+
+    # нет отката
+    pullbacks = [c.l for c in prev]
+    if min(pullbacks) >= last.l:
+        return CheckResult(False, 0, "no pullback")
+
+    return CheckResult(True, 2, "structure ok")
+
+
+# =========================
+# 3️⃣ TIMING + FOLLOW-THROUGH
+# =========================
+def score_timing(candles) -> CheckResult:
+    recent = candles[-10:]
+    vols = [c.v for c in recent]
+
+    # объём всплеск был, но продолжения нет
+    if max(vols[:-1]) > vols[-1] * 2:
+        return CheckResult(False, 0, "no follow-through")
+
+    # слишком поздно
+    closes = [c.c for c in recent]
+    if closes[-1] == max(closes):
+        return CheckResult(False, 0, "late entry")
+
+    return CheckResult(True, 2, "timing ok")
